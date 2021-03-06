@@ -2,7 +2,6 @@ module Repl (replProgram) where
 
 import Node.ReadLine
 import Control.Alt ((<|>))
-import Control.Monad.Base (liftBase)
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.List (List, toUnfoldable)
