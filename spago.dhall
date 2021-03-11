@@ -10,6 +10,7 @@ You can edit this file as you like.
   , "node-readline"
   , "parsing"
   , "psci-support"
+  , "stac"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
