@@ -4,12 +4,14 @@ You can edit this file as you like.
 -}
 { name = "my-project"
 , dependencies =
-  [ "console"
+  [ "ansi"
+  , "console"
   , "effect"
   , "monad-control"
   , "node-readline"
   , "parsing"
   , "psci-support"
+  , "stac"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]

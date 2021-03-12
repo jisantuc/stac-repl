@@ -1,82 +1,116 @@
 module Repl (replProgram) where
 
-import Node.ReadLine
-import Control.Alt ((<|>))
+import Affjax (printError)
+import Client.Stac (getCollection, getCollections)
+import Command (getParser)
+import Completions (getCompletions)
+import Context (toCollectionContext, toRootContext, toRootUrl)
 import Data.Either (Either(..))
-import Data.Generic.Rep (class Generic)
-import Data.List (List, toUnfoldable)
-import Data.Show.Generic (genericShow)
-import Data.String.CodeUnits (fromCharArray)
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Monoid (mempty)
+import Data.Set (fromFoldable)
+import Data.Stac (Collection(..), CollectionsResponse(..))
+import Data.String.NonEmpty (toString)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Class.Console (log)
+import Effect.Aff (launchAff_)
+import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
-import Prelude (class Show, Unit, bind, discard, pure, show, ($), (*>), (<$), (<$>), (<<<), (<>), (>>=))
-import Text.Parsing.Parser (Parser, parseErrorMessage, runParser)
-import Text.Parsing.Parser.Combinators (manyTill)
-import Text.Parsing.Parser.String (anyChar, eof, skipSpaces, string)
+import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
+import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
+import Printer (prettyPrintCollections)
+import Text.Parsing.Parser (parseErrorMessage, runParser)
+import Types (Cmd(..), Context(..))
 
-data Context
-  = RootContext
-  | CollectionContext String
-
-derive instance genericContext :: Generic Context _
-
-instance showContext :: Show Context where
-  show = genericShow
-
-data Cmd
-  = GetCollection String
-  | SetCollection String
-  | ViewCollection String
-  | UnsetCollection
-
-type StringParser
-  = Parser String
-
-getContext :: Effect (Ref Context)
-getContext = new RootContext
-
-fromList :: forall a. List a -> Array a
-fromList = toUnfoldable
-
-getParser :: Context -> StringParser Cmd
-getParser ctx =
+updateKnownCollections :: forall m. MonadEffect m => Ref Context -> Array Collection -> m Unit
+updateKnownCollections ctxRef collections =
   let
-    setCollectionParser = SetCollection <<< fromCharArray <<< fromList <$> (string "set collection" *> skipSpaces *> manyTill anyChar eof)
+    collectionIds = (\(Collection { id }) -> id) <$> collections
   in
-    case ctx of
-      RootContext -> setCollectionParser
-      CollectionContext s ->
-        ViewCollection s <$ (string "view" *> skipSpaces *> eof)
-          <|> UnsetCollection
-          <$ (string "unset collection" *> skipSpaces *> eof)
-          <|> setCollectionParser
+    liftEffect
+      $ do
+          ctx <- read ctxRef
+          validFor toRootContext ctx \{ rootUrl, knownCollections } ->
+            modify_
+              ( \_ ->
+                  RootContext { rootUrl, knownCollections: knownCollections <> fromFoldable collectionIds }
+              )
+              ctxRef
 
-execute :: Ref Context -> Cmd -> Effect Unit
-execute ctxRef cmd = case cmd of
-  GetCollection s -> do
-    read ctxRef >>= log <<< show
-    log s
-  SetCollection s -> do
-    read ctxRef >>= log <<< show
-    modify_ (\_ -> CollectionContext s) ctxRef
-    log $ "Set context to collection " <> s
-  ViewCollection s -> do
-    read ctxRef >>= log <<< show
-    log s
-  UnsetCollection -> do
-    modify_ (\_ -> RootContext) ctxRef
-    log "Returning to root context"
-
--- similar context handling to lineHandler happens here
-getCompletions :: Context -> String -> Effect ({ matched :: String, completions :: Array String })
-getCompletions ctx s = do
+validFor :: forall a m. MonadEffect m => (Context -> Maybe a) -> Context -> (a -> m Unit) -> m Unit
+validFor predicate ctx continuation =
   let
-    completer = contextCompleter ctx
-  pure $ completer s
+    effect = continuation <$> predicate ctx
 
-contextCompleter :: Context -> (String -> { matched :: String, completions :: Array String })
-contextCompleter _ = \s -> { matched: "", completions: [ "hi", "bye" ] }
+    fallback = log $ "Cannot do this action from " <> show ctx
+  in
+    fromMaybe fallback effect
+
+execute :: Interface -> Ref Context -> Cmd -> Effect Unit
+execute interface ctxRef cmd = do
+  ( case cmd of
+      GetCollection s -> do
+        read ctxRef >>= log <<< show
+        log $ toString s
+      SetCollection s -> do
+        ctx <- read ctxRef
+        case ctx of
+          RootContext { rootUrl: Just url } -> do
+            log $ "Set context to collection " <> toString s
+            modify_ (\_ -> CollectionContext { rootUrl: url, collectionId: s }) ctxRef
+          RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
+          CollectionContext { rootUrl } -> modify_ (\_ -> CollectionContext { rootUrl, collectionId: s }) ctxRef
+      ViewCollection s -> do
+        ctx <- read ctxRef
+        validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+          launchAff_ do
+            collectionResp <- getCollection rootUrl collectionId
+            case collectionResp of
+              Right (Collection { id }) -> (log $ "Got collection id " <> id)
+              Left err -> log $ "Could not fetch collection " <> toString collectionId <> ": " <> printError err
+      UnsetCollection -> do
+        modify_
+          ( case _ of
+              RootContext rec -> RootContext rec
+              CollectionContext { rootUrl } -> RootContext { rootUrl: Just rootUrl, knownCollections: mempty }
+          )
+          ctxRef
+        log "Returning to root context"
+      SetRootUrl s -> do
+        modify_
+          ( case _ of
+              CollectionContext { collectionId } -> CollectionContext { rootUrl: s, collectionId }
+              RootContext _ -> RootContext { rootUrl: Just s, knownCollections: mempty }
+          )
+          ctxRef
+        let
+          newPrompt = "stac " <> s <> " > "
+        setPrompt newPrompt interface
+      LocateCollection -> do
+        ctx <- read ctxRef
+        case ctx of
+          CollectionContext { rootUrl, collectionId } ->
+            launchAff_
+              $ do
+                  response <- getCollection rootUrl collectionId
+                  case response of
+                    Left err -> error "lol"
+                    Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
+          _ -> error $ "Cannot locate a collection outside of a collection context: " <> show ctx
+      ListCollections -> do
+        ctx <- read ctxRef
+        validFor toRootUrl ctx \rootUrl ->
+          launchAff_
+            $ do
+                response <- getCollections rootUrl
+                case response of
+                  Left err -> log $ "Could not list collections for " <> rootUrl <> ": " <> printError err
+                  Right resp@(CollectionsResponse { collections }) -> do
+                    updateKnownCollections ctxRef collections
+                    prettyPrintCollections resp
+  )
+    *> prompt interface
 
 -- what needs to happen in lineHandler?
 -- need to:
@@ -86,21 +120,18 @@ contextCompleter _ = \s -> { matched: "", completions: [ "hi", "bye" ] }
 -- * execute command (which might set a new context)
 lineHandler :: Ref Context -> Interface -> String -> Effect Unit
 lineHandler ctxRef interface s = do
-  parser <- case s of
-    "set collection" -> pure <<< pure $ SetCollection s
-    _ -> getParser <$> read ctxRef
+  parser <- getParser <$> read ctxRef
   let
     cmdParseResult = runParser s parser
-  case cmdParseResult of
-    Left parseError -> log $ parseErrorMessage parseError
-    Right cmd -> execute ctxRef cmd
-  prompt interface
+  case Tuple s cmdParseResult of
+    Tuple "" _ -> prompt interface
+    Tuple _ (Left parseError) -> log $ parseErrorMessage parseError
+    Tuple _ (Right cmd) -> execute interface ctxRef cmd
 
 replProgram :: Effect Interface
 replProgram = do
-  ctxRef <- getContext
-  currentContext <- read ctxRef
-  interface <- createConsoleInterface $ getCompletions currentContext
+  ctxRef <- new $ RootContext { rootUrl: Nothing, knownCollections: mempty }
+  interface <- createConsoleInterface $ getCompletions ctxRef
   setPrompt "stac > " interface
   setLineHandler (lineHandler ctxRef interface) interface
   pure $ interface
