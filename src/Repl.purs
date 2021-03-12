@@ -1,142 +1,116 @@
 module Repl (replProgram) where
 
-import Client.Stac (getCollection)
-import Control.Alt ((<|>))
-import Data.Array (filter)
+import Affjax (printError)
+import Client.Stac (getCollection, getCollections)
+import Command (getParser)
+import Completions (getCompletions)
+import Context (toCollectionContext, toRootContext, toRootUrl)
 import Data.Either (Either(..))
-import Data.Generic.Rep (class Generic)
-import Data.List (List, toUnfoldable)
-import Data.Maybe (Maybe(..))
-import Data.Show.Generic (genericShow)
-import Data.Stac (Collection(..))
-import Data.String (Pattern(..))
-import Data.String.CodeUnits (contains, fromCharArray)
-import Data.String.NonEmpty (NonEmptyString, fromString, toString)
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Monoid (mempty)
+import Data.Set (fromFoldable)
+import Data.Stac (Collection(..), CollectionsResponse(..))
+import Data.String.NonEmpty (toString)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Aff (launchAff_)
+import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
-import Prelude (class Show, Unit, bind, discard, pure, show, ($), (*>), (<$), (<$>), (<<<), (<>), (>>=))
-import Text.Parsing.Parser (Parser, fail, parseErrorMessage, runParser)
-import Text.Parsing.Parser.Combinators (manyTill)
-import Text.Parsing.Parser.String (anyChar, eof, skipSpaces, string)
+import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
+import Printer (prettyPrintCollections)
+import Text.Parsing.Parser (parseErrorMessage, runParser)
+import Types (Cmd(..), Context(..))
 
-type RootUrl
-  = String
-
-data Context
-  = RootContext (Maybe RootUrl)
-  | CollectionContext RootUrl NonEmptyString
-
-derive instance genericContext :: Generic Context _
-
-instance showContext :: Show Context where
-  show = genericShow
-
-data Cmd
-  = GetCollection NonEmptyString
-  | SetCollection NonEmptyString
-  | ViewCollection NonEmptyString
-  | LocateCollection
-  | SetRootUrl RootUrl
-  | UnsetCollection
-
-type StringParser
-  = Parser String
-
-fromList :: forall a. List a -> Array a
-fromList = toUnfoldable
-
-getParser :: Context -> StringParser Cmd
-getParser ctx =
+updateKnownCollections :: forall m. MonadEffect m => Ref Context -> Array Collection -> m Unit
+updateKnownCollections ctxRef collections =
   let
-    setCollectionParser =
-      SetCollection
-        <$> ( fromCharArray <<< fromList <$> (string "set collection" *> skipSpaces *> manyTill anyChar eof)
-              >>= \s -> case fromString s of
-                  Just ne -> pure ne
-                  Nothing -> fail "Cannot set an empty string as collection"
-          )
-
-    setRootUrlParser = SetRootUrl <<< fromCharArray <<< fromList <$> (string "set root url" *> skipSpaces *> manyTill anyChar eof)
-
-    locateCollectionParser = \collectionId -> LocateCollection <$ (string "locate" *> skipSpaces *> eof)
+    collectionIds = (\(Collection { id }) -> id) <$> collections
   in
-    case ctx of
-      RootContext _ -> setCollectionParser <|> setRootUrlParser
-      CollectionContext _ s ->
-        ViewCollection s <$ (string "view" *> skipSpaces *> eof)
-          <|> UnsetCollection
-          <$ (string "unset collection" *> skipSpaces *> eof)
-          <|> setCollectionParser
-          <|> setRootUrlParser
-          <|> locateCollectionParser s
+    liftEffect
+      $ do
+          ctx <- read ctxRef
+          validFor toRootContext ctx \{ rootUrl, knownCollections } ->
+            modify_
+              ( \_ ->
+                  RootContext { rootUrl, knownCollections: knownCollections <> fromFoldable collectionIds }
+              )
+              ctxRef
+
+validFor :: forall a m. MonadEffect m => (Context -> Maybe a) -> Context -> (a -> m Unit) -> m Unit
+validFor predicate ctx continuation =
+  let
+    effect = continuation <$> predicate ctx
+
+    fallback = log $ "Cannot do this action from " <> show ctx
+  in
+    fromMaybe fallback effect
 
 execute :: Interface -> Ref Context -> Cmd -> Effect Unit
 execute interface ctxRef cmd = do
-  case cmd of
-    GetCollection s -> do
-      read ctxRef >>= log <<< show
-      log $ toString s
-    SetCollection s -> do
-      ctx <- read ctxRef
-      case ctx of
-        RootContext (Just rootUrl) -> do
-          log $ "Set context to collection " <> toString s
-          modify_ (\_ -> CollectionContext rootUrl s) ctxRef
-        RootContext Nothing -> log $ "Can't set collection context without a root url"
-        CollectionContext rootUrl _ -> modify_ (\_ -> CollectionContext rootUrl s) ctxRef
-    ViewCollection s -> do
-      read ctxRef >>= log <<< show
-      log $ toString s
-    UnsetCollection -> do
-      modify_
-        ( case _ of
-            RootContext url -> RootContext url
-            CollectionContext url _ -> RootContext (Just url)
-        )
-        ctxRef
-      log "Returning to root context"
-    SetRootUrl s -> do
-      modify_
-        ( case _ of
-            CollectionContext _ coll -> CollectionContext s coll
-            RootContext _ -> RootContext (Just s)
-        )
-        ctxRef
-      let
-        newPrompt = "stac " <> s <> " > "
-      setPrompt newPrompt interface
-    LocateCollection -> do
-      ctx <- read ctxRef
-      case ctx of
-        CollectionContext url collectionId ->
+  ( case cmd of
+      GetCollection s -> do
+        read ctxRef >>= log <<< show
+        log $ toString s
+      SetCollection s -> do
+        ctx <- read ctxRef
+        case ctx of
+          RootContext { rootUrl: Just url } -> do
+            log $ "Set context to collection " <> toString s
+            modify_ (\_ -> CollectionContext { rootUrl: url, collectionId: s }) ctxRef
+          RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
+          CollectionContext { rootUrl } -> modify_ (\_ -> CollectionContext { rootUrl, collectionId: s }) ctxRef
+      ViewCollection s -> do
+        ctx <- read ctxRef
+        validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+          launchAff_ do
+            collectionResp <- getCollection rootUrl collectionId
+            case collectionResp of
+              Right (Collection { id }) -> (log $ "Got collection id " <> id)
+              Left err -> log $ "Could not fetch collection " <> toString collectionId <> ": " <> printError err
+      UnsetCollection -> do
+        modify_
+          ( case _ of
+              RootContext rec -> RootContext rec
+              CollectionContext { rootUrl } -> RootContext { rootUrl: Just rootUrl, knownCollections: mempty }
+          )
+          ctxRef
+        log "Returning to root context"
+      SetRootUrl s -> do
+        modify_
+          ( case _ of
+              CollectionContext { collectionId } -> CollectionContext { rootUrl: s, collectionId }
+              RootContext _ -> RootContext { rootUrl: Just s, knownCollections: mempty }
+          )
+          ctxRef
+        let
+          newPrompt = "stac " <> s <> " > "
+        setPrompt newPrompt interface
+      LocateCollection -> do
+        ctx <- read ctxRef
+        case ctx of
+          CollectionContext { rootUrl, collectionId } ->
+            launchAff_
+              $ do
+                  response <- getCollection rootUrl collectionId
+                  case response of
+                    Left err -> error "lol"
+                    Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
+          _ -> error $ "Cannot locate a collection outside of a collection context: " <> show ctx
+      ListCollections -> do
+        ctx <- read ctxRef
+        validFor toRootUrl ctx \rootUrl ->
           launchAff_
             $ do
-                response <- getCollection url collectionId
+                response <- getCollections rootUrl
                 case response of
-                  Left err -> error "lol"
-                  Right (Collection { id }) -> log <<< show $ "Got collection " <> id
-        _ -> error $ "Cannot locate a collection outside of a collection context: " <> show ctx
-
--- similar context handling to lineHandler happens here
-getCompletions :: Ref Context -> String -> Effect ({ matched :: String, completions :: Array String })
-getCompletions ctxRef s = do
-  ctx <- read ctxRef
-  contextCompleter ctx $ s
-
-collectionCommands :: Array String
-collectionCommands = [ "view", "unset collection", "locate" ]
-
-contextCompleter :: Context -> (String -> Effect { matched :: String, completions :: Array String })
-contextCompleter (RootContext _) = \s -> pure { matched: "", completions: [ "hi", "bye" ] }
-
-contextCompleter (CollectionContext url collectionId) = \s ->
-  let
-    strInCommand = filter (\cmd -> contains (Pattern s) cmd) collectionCommands
-  in
-    pure $ { matched: s, completions: strInCommand }
+                  Left err -> log $ "Could not list collections for " <> rootUrl <> ": " <> printError err
+                  Right resp@(CollectionsResponse { collections }) -> do
+                    updateKnownCollections ctxRef collections
+                    prettyPrintCollections resp
+  )
+    *> prompt interface
 
 -- what needs to happen in lineHandler?
 -- need to:
@@ -149,14 +123,14 @@ lineHandler ctxRef interface s = do
   parser <- getParser <$> read ctxRef
   let
     cmdParseResult = runParser s parser
-  case cmdParseResult of
-    Left parseError -> log $ parseErrorMessage parseError
-    Right cmd -> execute interface ctxRef cmd
-  prompt interface
+  case Tuple s cmdParseResult of
+    Tuple "" _ -> prompt interface
+    Tuple _ (Left parseError) -> log $ parseErrorMessage parseError
+    Tuple _ (Right cmd) -> execute interface ctxRef cmd
 
 replProgram :: Effect Interface
 replProgram = do
-  ctxRef <- new $ RootContext Nothing
+  ctxRef <- new $ RootContext { rootUrl: Nothing, knownCollections: mempty }
   interface <- createConsoleInterface $ getCompletions ctxRef
   setPrompt "stac > " interface
   setLineHandler (lineHandler ctxRef interface) interface
