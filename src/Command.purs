@@ -43,10 +43,11 @@ getParser :: Context -> StringParser Cmd
 getParser ctx = case ctx of
   RootContext { rootUrl: Nothing } -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser
   RootContext { rootUrl: Just url } -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser <|> getConformanceParser url
-  CollectionContext { collectionId } ->
+  CollectionContext { collectionId, rootUrl } ->
     ViewCollection collectionId <$ (string "view" *> skipSpaces *> eof)
       <|> UnsetCollection
       <$ (string "unset collection" *> skipSpaces *> eof)
       <|> setCollectionParser
       <|> setRootUrlParser
       <|> locateCollectionParser
+      <|> getConformanceParser rootUrl
