@@ -8,4 +8,4 @@ Quickstart
 
 - clone this repo
 - `spago run`
-- more things once those are possible
+- `<TAB><TAB>` and try out some commands
