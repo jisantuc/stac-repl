@@ -20,7 +20,7 @@ import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
 import Printer (prettyPrintCollections, prettyPrintConformance)
-import Text.Parsing.Parser (parseErrorMessage, runParser)
+import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
 
 updateKnownCollections :: forall m. MonadEffect m => Ref Context -> Array Collection -> m Unit
@@ -134,7 +134,12 @@ lineHandler ctxRef interface s = do
     cmdParseResult = runParser s parser
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
-    Tuple _ (Left parseError) -> log $ parseErrorMessage parseError
+    Tuple _ (Left _) -> do
+      log
+        $ "I didn't recognize the command "
+        <> s
+        <> ". Try <TAB><TAB> to see available commands."
+      prompt interface
     Tuple _ (Right cmd) -> execute interface ctxRef cmd
 
 replProgram :: Effect Interface
