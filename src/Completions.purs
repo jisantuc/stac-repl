@@ -23,8 +23,11 @@ collectionCommands = [ "view", "unset collection", "locate", "get conformance" ]
 
 rootCommands :: Maybe RootUrl -> Array String
 rootCommands rootUrlM =
-  [ "set root url", "set collection", "list collections" ]
-    <> foldMap (const [ "get conformance" ]) rootUrlM
+  [ "set root url" ]
+    <> foldMap
+        ( const [ "get conformance", "set collection", "list collections" ]
+        )
+        rootUrlM
 
 contextCompleter :: Context -> (String -> Effect { matched :: String, completions :: Array String })
 contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
