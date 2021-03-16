@@ -1,7 +1,7 @@
 module Repl (replProgram) where
 
 import Affjax (printError)
-import Client.Stac (getCollection, getCollections)
+import Client.Stac (getCollection, getCollections, getConformance)
 import Command (getParser)
 import Completions (getCompletions)
 import Context (toCollectionContext, toRootContext, toRootUrl)
@@ -19,8 +19,8 @@ import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
-import Printer (prettyPrintCollections)
-import Text.Parsing.Parser (parseErrorMessage, runParser)
+import Printer (prettyPrintCollections, prettyPrintConformance)
+import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
 
 updateKnownCollections :: forall m. MonadEffect m => Ref Context -> Array Collection -> m Unit
@@ -109,6 +109,15 @@ execute interface ctxRef cmd = do
                   Right resp@(CollectionsResponse { collections }) -> do
                     updateKnownCollections ctxRef collections
                     prettyPrintCollections resp
+      GetConformance root -> do
+        ctx <- read ctxRef
+        validFor toRootUrl ctx \rootUrl ->
+          launchAff_
+            $ do
+                response <- getConformance rootUrl
+                case response of
+                  Left err -> log $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
+                  Right conformance -> prettyPrintConformance conformance
   )
     *> prompt interface
 
@@ -125,7 +134,12 @@ lineHandler ctxRef interface s = do
     cmdParseResult = runParser s parser
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
-    Tuple _ (Left parseError) -> log $ parseErrorMessage parseError
+    Tuple _ (Left _) -> do
+      log
+        $ "I didn't recognize the command "
+        <> s
+        <> ". Try <TAB><TAB> to see available commands."
+      prompt interface
     Tuple _ (Right cmd) -> execute interface ctxRef cmd
 
 replProgram :: Effect Interface

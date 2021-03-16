@@ -1,15 +1,17 @@
-module Completions where
+module Completions (getCompletions) where
 
 import Command (collectionIdParser)
 import Data.Array (filter)
 import Data.Either (fromRight)
+import Data.Foldable (foldMap)
+import Data.Maybe (Maybe)
 import Data.Set (toUnfoldable)
 import Data.String (Pattern(..), contains)
 import Effect (Effect)
 import Effect.Ref (Ref, read)
-import Prelude (bind, pure, ($), (<$>), (<>))
+import Prelude (bind, const, pure, ($), (<$>), (<>))
 import Text.Parsing.Parser (runParser)
-import Types (Context(..))
+import Types (Context(..), RootUrl)
 
 getCompletions :: Ref Context -> String -> Effect ({ matched :: String, completions :: Array String })
 getCompletions ctxRef s = do
@@ -17,15 +19,17 @@ getCompletions ctxRef s = do
   contextCompleter ctx $ s
 
 collectionCommands :: Array String
-collectionCommands = [ "view", "unset collection", "locate" ]
+collectionCommands = [ "view", "unset collection", "locate", "get conformance" ]
 
-rootCommands :: Array String
-rootCommands = [ "set root url", "set collection", "list collections" ]
+rootCommands :: Maybe RootUrl -> Array String
+rootCommands rootUrlM =
+  [ "set root url", "set collection", "list collections" ]
+    <> foldMap (const [ "get conformance" ]) rootUrlM
 
 contextCompleter :: Context -> (String -> Effect { matched :: String, completions :: Array String })
-contextCompleter (RootContext { knownCollections }) = \s ->
+contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
   let
-    strInCommand = filter (\cmd -> contains (Pattern s) cmd) rootCommands
+    strInCommand = filter (\cmd -> contains (Pattern s) cmd) (rootCommands rootUrl)
 
     collectionIdParseResult = runParser s collectionIdParser
 

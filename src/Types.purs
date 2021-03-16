@@ -32,6 +32,7 @@ instance showContext :: Show Context where
 data Cmd
   = GetCollection NonEmptyString
   | SetCollection NonEmptyString
+  | GetConformance RootUrl
   | ListCollections
   | ViewCollection NonEmptyString
   | LocateCollection
