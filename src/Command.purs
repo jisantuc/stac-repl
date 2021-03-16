@@ -1,4 +1,4 @@
-module Command where
+module Command (getParser, collectionIdParser) where
 
 import Control.Alt ((<|>))
 import Control.Apply ((*>), (<$))
@@ -10,7 +10,7 @@ import Prelude (pure, (<$>), (<<<), (>>=))
 import Text.Parsing.Parser (fail)
 import Text.Parsing.Parser.Combinators (manyTill)
 import Text.Parsing.Parser.String (anyChar, eof, skipSpaces, string)
-import Types (Cmd(..), Context(..), StringParser)
+import Types (Cmd(..), Context(..), StringParser, RootUrl)
 
 fromList :: forall a. List a -> Array a
 fromList = toUnfoldable
@@ -36,9 +36,13 @@ locateCollectionParser = LocateCollection <$ (string "locate" *> skipSpaces *> e
 listCollectionsParser :: StringParser Cmd
 listCollectionsParser = ListCollections <$ (string "list collections" *> skipSpaces *> manyTill anyChar eof)
 
+getConformanceParser :: RootUrl -> StringParser Cmd
+getConformanceParser root = GetConformance root <$ (string "get conformance" *> skipSpaces *> eof)
+
 getParser :: Context -> StringParser Cmd
 getParser ctx = case ctx of
-  RootContext _ -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser
+  RootContext { rootUrl: Nothing } -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser
+  RootContext { rootUrl: Just url } -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser <|> getConformanceParser url
   CollectionContext { collectionId } ->
     ViewCollection collectionId <$ (string "view" *> skipSpaces *> eof)
       <|> UnsetCollection

@@ -1,7 +1,7 @@
 module Repl (replProgram) where
 
 import Affjax (printError)
-import Client.Stac (getCollection, getCollections)
+import Client.Stac (getCollection, getCollections, getConformance)
 import Command (getParser)
 import Completions (getCompletions)
 import Context (toCollectionContext, toRootContext, toRootUrl)
@@ -19,7 +19,7 @@ import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
-import Printer (prettyPrintCollections)
+import Printer (prettyPrintCollections, prettyPrintConformance)
 import Text.Parsing.Parser (parseErrorMessage, runParser)
 import Types (Cmd(..), Context(..))
 
@@ -109,6 +109,15 @@ execute interface ctxRef cmd = do
                   Right resp@(CollectionsResponse { collections }) -> do
                     updateKnownCollections ctxRef collections
                     prettyPrintCollections resp
+      GetConformance root -> do
+        ctx <- read ctxRef
+        validFor toRootUrl ctx \rootUrl ->
+          launchAff_
+            $ do
+                response <- getConformance rootUrl
+                case response of
+                  Left err -> log $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
+                  Right conformance -> prettyPrintConformance conformance
   )
     *> prompt interface
 
