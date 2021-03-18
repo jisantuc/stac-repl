@@ -36,10 +36,27 @@ contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
 
     collectionIdParseResult = runParser s collectionIdParser
 
+    -- the _match_ needs to be a prefix of the completion to make the magic tab
+    -- complete "advance to longest matched point" behavior work.
+    -- mapping "set collection " onto the beginning of the collection IDs that
+    -- we know about ensures the match.
+    -- this is brittle -- it only works because we _know_ in this case that
+    -- collectionIdParser relies on that string as a leader.
+    -- best case would be wrap the parser in some kind of data type like
+    -- data CmdParser = { leaderString :: String, parser :: Parser Cmd }
+    -- that would tie this information to the parser, but I haven't thought about
+    -- this much yet. For now, I'm acknowledging that it's brittle and moving on.
     collectionIdMatches =
-      fromRight []
-        $ (\collectionId -> filter (\known -> contains (Pattern collectionId) known) (toUnfoldable knownCollections))
-        <$> collectionIdParseResult
+      ("set collection " <> _)
+        <$> ( fromRight []
+              $ ( \collectionId ->
+                    filter
+                      ( \known -> contains (Pattern collectionId) known
+                      )
+                      (toUnfoldable knownCollections)
+                )
+              <$> collectionIdParseResult
+          )
   in
     pure $ { matched: s, completions: strInCommand <> collectionIdMatches }
 
