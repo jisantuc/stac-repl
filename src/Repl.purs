@@ -18,12 +18,16 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
-import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>), (>>=))
-import Printer (prettyPrintCollections, prettyPrintConformance)
+import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>))
+import Printer (colorizeError, prettyPrintCollection, prettyPrintCollections, prettyPrintConformance)
 import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
 
-updateKnownCollections :: forall m. MonadEffect m => Ref Context -> Array Collection -> m Unit
+updateKnownCollections ::
+  forall m.
+  MonadEffect m =>
+  Ref Context ->
+  Array Collection -> m Unit
 updateKnownCollections ctxRef collections =
   let
     collectionIds = (\(Collection { id }) -> id) <$> collections
@@ -34,11 +38,16 @@ updateKnownCollections ctxRef collections =
           validFor toRootContext ctx \{ rootUrl, knownCollections } ->
             modify_
               ( \_ ->
-                  RootContext { rootUrl, knownCollections: knownCollections <> fromFoldable collectionIds }
+                  RootContext
+                    { rootUrl, knownCollections: knownCollections <> fromFoldable collectionIds
+                    }
               )
               ctxRef
 
-validFor :: forall a m. MonadEffect m => (Context -> Maybe a) -> Context -> (a -> m Unit) -> m Unit
+validFor ::
+  forall a m.
+  MonadEffect m =>
+  (Context -> Maybe a) -> Context -> (a -> m Unit) -> m Unit
 validFor predicate ctx continuation =
   let
     effect = continuation <$> predicate ctx
@@ -50,37 +59,52 @@ validFor predicate ctx continuation =
 execute :: Interface -> Ref Context -> Cmd -> Effect Unit
 execute interface ctxRef cmd = do
   ( case cmd of
-      GetCollection s -> do
-        read ctxRef >>= log <<< show
-        log $ toString s
       SetCollection s -> do
         ctx <- read ctxRef
         case ctx of
-          RootContext { rootUrl: Just url } -> do
+          RootContext { rootUrl: Just url, knownCollections } -> do
             log $ "Set context to collection " <> toString s
-            modify_ (\_ -> CollectionContext { rootUrl: url, collectionId: s }) ctxRef
+            modify_
+              ( \_ ->
+                  CollectionContext
+                    { rootUrl: url, collectionId: s, knownCollections
+                    }
+              )
+              ctxRef
           RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
-          CollectionContext { rootUrl } -> modify_ (\_ -> CollectionContext { rootUrl, collectionId: s }) ctxRef
+          CollectionContext { rootUrl, knownCollections } ->
+            modify_
+              ( \_ -> CollectionContext { rootUrl, collectionId: s, knownCollections }
+              )
+              ctxRef
       ViewCollection s -> do
         ctx <- read ctxRef
         validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
           launchAff_ do
             collectionResp <- getCollection rootUrl collectionId
             case collectionResp of
-              Right (Collection { id }) -> (log $ "Got collection id " <> id)
-              Left err -> log $ "Could not fetch collection " <> toString collectionId <> ": " <> printError err
+              Right collection -> prettyPrintCollection collection
+              Left err ->
+                log <<< colorizeError
+                  $ "Could not fetch collection "
+                  <> toString collectionId
+                  <> ": "
+                  <> printError err
       UnsetCollection -> do
         modify_
           ( case _ of
               RootContext rec -> RootContext rec
-              CollectionContext { rootUrl } -> RootContext { rootUrl: Just rootUrl, knownCollections: mempty }
+              CollectionContext { rootUrl, knownCollections } ->
+                RootContext
+                  { rootUrl: Just rootUrl, knownCollections
+                  }
           )
           ctxRef
         log "Returning to root context"
       SetRootUrl s -> do
         modify_
           ( case _ of
-              CollectionContext { collectionId } -> CollectionContext { rootUrl: s, collectionId }
+              CollectionContext { collectionId } -> RootContext { rootUrl: Just s, knownCollections: mempty }
               RootContext _ -> RootContext { rootUrl: Just s, knownCollections: mempty }
           )
           ctxRef
@@ -95,7 +119,12 @@ execute interface ctxRef cmd = do
               $ do
                   response <- getCollection rootUrl collectionId
                   case response of
-                    Left err -> error "lol"
+                    Left err ->
+                      log <<< colorizeError
+                        $ "Could not fetch collection "
+                        <> toString collectionId
+                        <> ": "
+                        <> printError err
                     Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
           _ -> error $ "Cannot locate a collection outside of a collection context: " <> show ctx
       ListCollections -> do
@@ -105,7 +134,12 @@ execute interface ctxRef cmd = do
             $ do
                 response <- getCollections rootUrl
                 case response of
-                  Left err -> log $ "Could not list collections for " <> rootUrl <> ": " <> printError err
+                  Left err ->
+                    log <<< colorizeError
+                      $ "Could not list collections for "
+                      <> rootUrl
+                      <> ": "
+                      <> printError err
                   Right resp@(CollectionsResponse { collections }) -> do
                     updateKnownCollections ctxRef collections
                     prettyPrintCollections resp
@@ -116,7 +150,7 @@ execute interface ctxRef cmd = do
             $ do
                 response <- getConformance rootUrl
                 case response of
-                  Left err -> log $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
+                  Left err -> log <<< colorizeError $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
                   Right conformance -> prettyPrintConformance conformance
   )
     *> prompt interface
@@ -135,7 +169,7 @@ lineHandler ctxRef interface s = do
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
     Tuple _ (Left _) -> do
-      log
+      log <<< colorizeError
         $ "I didn't recognize the command "
         <> s
         <> ". Try <TAB><TAB> to see available commands."
