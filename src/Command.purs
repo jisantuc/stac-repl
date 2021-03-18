@@ -42,7 +42,11 @@ getConformanceParser root = GetConformance root <$ (string "get conformance" *> 
 getParser :: Context -> StringParser Cmd
 getParser ctx = case ctx of
   RootContext { rootUrl: Nothing } -> setRootUrlParser
-  RootContext { rootUrl: Just url } -> setCollectionParser <|> setRootUrlParser <|> listCollectionsParser <|> getConformanceParser url
+  RootContext { rootUrl: Just url } ->
+    setCollectionParser
+      <|> setRootUrlParser
+      <|> listCollectionsParser
+      <|> getConformanceParser url
   CollectionContext { collectionId, rootUrl } ->
     ViewCollection collectionId <$ (string "view" *> skipSpaces *> eof)
       <|> UnsetCollection

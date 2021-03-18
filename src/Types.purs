@@ -15,7 +15,7 @@ type CollectionId
   = String
 
 type CollectionContextRecord
-  = { rootUrl :: RootUrl, collectionId :: NonEmptyString }
+  = { rootUrl :: RootUrl, collectionId :: NonEmptyString, knownCollections :: Set CollectionId }
 
 type RootContextRecord
   = { rootUrl :: Maybe RootUrl, knownCollections :: Set CollectionId }
@@ -30,8 +30,7 @@ instance showContext :: Show Context where
   show = genericShow
 
 data Cmd
-  = GetCollection NonEmptyString
-  | SetCollection NonEmptyString
+  = SetCollection NonEmptyString
   | GetConformance RootUrl
   | ListCollections
   | ViewCollection NonEmptyString
