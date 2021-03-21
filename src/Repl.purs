@@ -3,7 +3,7 @@ module Repl (replProgram) where
 import Affjax (printError)
 import Ansi.Codes (Color(..))
 import Ansi.Output (foreground, withGraphics)
-import Client.Stac (getCollection, getCollections, getConformance)
+import Client.Stac (getCollection, getCollectionItems, getCollections, getConformance, nextCollectionItemsPage)
 import Command (getParser)
 import Completions (getCompletions)
 import Context (toCollectionContext, toRootContext, toRootUrl)
@@ -11,7 +11,7 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Monoid (mempty)
 import Data.Set (fromFoldable)
-import Data.Stac (Collection(..), CollectionsResponse(..))
+import Data.Stac (Collection(..), CollectionItemsResponse, CollectionsResponse(..), Item(..))
 import Data.String.NonEmpty (toString)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
@@ -21,7 +21,7 @@ import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (<$>), (<<<), (<>))
-import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance)
+import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance, prettyPrintItems)
 import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
 
@@ -49,6 +49,24 @@ updateKnownCollections ctxRef collections =
               )
               ctxRef
 
+updateItemsResponse :: forall m. MonadEffect m => Ref Context -> CollectionItemsResponse -> m Unit
+updateItemsResponse ctxRef itemsResponse =
+  let
+    itemIds = fromFoldable $ (\(Item { id }) -> id) <$> itemsResponse.features
+  in
+    liftEffect
+      $ modify_
+          ( case _ of
+              CollectionContext rec ->
+                CollectionContext
+                  $ rec
+                      { itemsResponse = itemsResponse
+                      , knownItems = rec.knownItems <> mempty
+                      }
+              ctx -> ctx
+          )
+          ctxRef
+
 validFor ::
   forall a m.
   MonadEffect m =>
@@ -71,14 +89,26 @@ execute interface ctxRef cmd = case cmd of
         modify_
           ( \_ ->
               CollectionContext
-                { rootUrl: url, collectionId: s, knownCollections
+                { rootUrl: url
+                , collectionId: s
+                , knownCollections
+                , itemsResponse: { features: [], links: [] }
+                , knownItems: mempty
                 }
           )
           ctxRef
-      RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
-      CollectionContext { rootUrl, knownCollections } ->
+      RootContext { rootUrl: Nothing } -> log $ "Can't choose a collection without a root url"
+      CollectionContext { rootUrl, knownCollections } -> do
+        log $ "Set context to collection " <> toString s
         modify_
-          ( \_ -> CollectionContext { rootUrl, collectionId: s, knownCollections }
+          ( \_ ->
+              CollectionContext
+                { rootUrl
+                , collectionId: s
+                , knownCollections
+                , itemsResponse: { features: [], links: [] }
+                , knownItems: mempty
+                }
           )
           ctxRef
     prompt interface
@@ -165,13 +195,42 @@ execute interface ctxRef cmd = case cmd of
               Left err -> error $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
               Right conformance -> prettyPrintConformance conformance
             liftEffect $ prompt interface
+  ListItems pageSize -> do
+    ctx <- read ctxRef
+    validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+      launchAff_ do
+        response <- getCollectionItems rootUrl collectionId
+        case response of
+          Left err ->
+            error
+              $ "Could not get items for "
+              <> rootUrl
+              <> " collection "
+              <> toString collectionId
+              <> ": "
+              <> printError err
+          Right resp@{ features } -> do
+            updateItemsResponse ctxRef resp
+            prettyPrintItems features
+            liftEffect $ prompt interface
+        liftEffect $ prompt interface
+  NextItemsPage -> do
+    ctx <- read ctxRef
+    validFor toCollectionContext ctx \{ collectionId, itemsResponse } ->
+      launchAff_ do
+        response <- nextCollectionItemsPage itemsResponse
+        case response of
+          Left err ->
+            error
+              $ "Could not get next items page for "
+              <> toString collectionId
+              <> ": "
+              <> printError err
+          Right resp@{ features } -> do
+            updateItemsResponse ctxRef resp
+            prettyPrintItems features
+            liftEffect $ prompt interface
 
--- what needs to happen in lineHandler?
--- need to:
--- * get current context (e.g. root, collection, whatever)
--- * obtain the parser for that context
--- * parse the string to the command for that context
--- * execute command (which might set a new context)
 lineHandler :: Ref Context -> Interface -> String -> Effect Unit
 lineHandler ctxRef interface s = do
   parser <- getParser <$> read ctxRef
@@ -182,7 +241,7 @@ lineHandler ctxRef interface s = do
     Tuple _ (Left _) -> do
       error
         $ "I didn't recognize the command "
-        <> s
+        <> withGraphics (foreground Red) s
         <> ". Try <TAB><TAB> to see available commands."
       prompt interface
     Tuple _ (Right cmd) -> execute interface ctxRef cmd

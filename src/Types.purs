@@ -5,6 +5,7 @@ import Data.Maybe (Maybe)
 import Data.Set (Set)
 import Data.Show.Generic (genericShow)
 import Data.String.NonEmpty (NonEmptyString)
+import Model.CollectionItemsResponse (CollectionItemsResponse)
 import Prelude (class Show)
 import Text.Parsing.Parser (Parser)
 
@@ -14,8 +15,16 @@ type RootUrl
 type CollectionId
   = String
 
+type ItemId
+  = String
+
 type CollectionContextRecord
-  = { rootUrl :: RootUrl, collectionId :: NonEmptyString, knownCollections :: Set CollectionId }
+  = { rootUrl :: RootUrl
+    , collectionId :: NonEmptyString
+    , knownCollections :: Set CollectionId
+    , itemsResponse :: CollectionItemsResponse
+    , knownItems :: Set ItemId
+    }
 
 type RootContextRecord
   = { rootUrl :: Maybe RootUrl, knownCollections :: Set CollectionId }
@@ -37,6 +46,8 @@ data Cmd
   | LocateCollection
   | SetRootUrl RootUrl
   | UnsetCollection
+  | ListItems Int
+  | NextItemsPage
 
 type StringParser
   = Parser String

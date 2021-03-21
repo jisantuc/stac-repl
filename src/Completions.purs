@@ -19,7 +19,7 @@ getCompletions ctxRef s = do
   contextCompleter ctx $ s
 
 collectionCommands :: Array String
-collectionCommands = [ "view", "unset collection", "locate", "get conformance" ]
+collectionCommands = [ "view", "unset collection", "locate", "get conformance", "list items", "next page" ]
 
 rootCommands :: Maybe RootUrl -> Array String
 rootCommands rootUrlM =

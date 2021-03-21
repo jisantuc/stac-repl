@@ -2,15 +2,37 @@ module Command (getParser, collectionIdParser) where
 
 import Control.Alt ((<|>))
 import Control.Apply ((*>), (<$))
+import Data.Array (foldl, some)
+import Data.CodePoint.Unicode (hexDigitToInt)
 import Data.List (List, toUnfoldable)
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), maybe)
+import Data.String (codePointFromChar)
 import Data.String.CodeUnits (fromCharArray)
 import Data.String.NonEmpty (fromString)
-import Prelude (pure, (<$>), (<<<), (>>=))
+import Prelude (bind, pure, ($), (*), (+), (<$>), (<*), (<<<), (>>=))
 import Text.Parsing.Parser (fail)
 import Text.Parsing.Parser.Combinators (manyTill)
 import Text.Parsing.Parser.String (anyChar, eof, skipSpaces, string)
-import Types (Cmd(..), Context(..), StringParser, RootUrl)
+import Text.Parsing.Parser.Token (digit)
+import Types (Cmd(..), Context(..), RootUrl, StringParser)
+
+-- more or less ripped off from
+-- https://github.com/purescript-contrib/purescript-parsing/blob/v6.0.0/src/Text/Parsing/Parser/Token.purs#L598-L605
+-- trying to create the object containing all the special parsers
+-- was failing to compile with a kind unification error 🤔
+decimal :: StringParser Int
+decimal = do
+  digits <- some digit
+  ( maybe (fail "not digits") pure
+      $ foldl folder (Just 0) digits
+  )
+  where
+  base = 10
+
+  folder :: Maybe Int -> Char -> Maybe Int
+  folder Nothing _ = Nothing
+
+  folder (Just x) d = ((base * x) + _) <$> hexDigitToInt (codePointFromChar d)
 
 fromList :: forall a. List a -> Array a
 fromList = toUnfoldable
@@ -39,6 +61,16 @@ listCollectionsParser = ListCollections <$ (string "list collections" *> skipSpa
 getConformanceParser :: RootUrl -> StringParser Cmd
 getConformanceParser root = GetConformance root <$ (string "get conformance" *> skipSpaces *> eof)
 
+listItemsParser :: StringParser Cmd
+listItemsParser =
+  ListItems 10 <$ (string "list items")
+    <|> ( ListItems
+          <$> (string "list" *> skipSpaces *> decimal <* skipSpaces <* string "items")
+      )
+
+nextPageParser :: StringParser Cmd
+nextPageParser = NextItemsPage <$ string "next page"
+
 getParser :: Context -> StringParser Cmd
 getParser ctx = case ctx of
   RootContext { rootUrl: Nothing } -> setRootUrlParser
@@ -55,3 +87,5 @@ getParser ctx = case ctx of
       <|> setRootUrlParser
       <|> locateCollectionParser
       <|> getConformanceParser rootUrl
+      <|> listItemsParser
+      <|> nextPageParser
