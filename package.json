@@ -1,4 +1,9 @@
 {
+  "private": true,
+  "scripts": {
+    "build": "spago build --purs-args '--censor-lib --strict --censor-codes=UserDefinedWarning'",
+    "test": "spago test --no-install"
+  },
   "dependencies": {
     "@turf/helpers": "^6.3.0",
     "xhr2": "^0.2.1"

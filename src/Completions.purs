@@ -5,7 +5,7 @@ import Data.Array (filter)
 import Data.Either (fromRight)
 import Data.Foldable (foldMap)
 import Data.Maybe (Maybe)
-import Data.Set (toUnfoldable)
+import Data.Set (Set, toUnfoldable)
 import Data.String (Pattern(..), contains)
 import Effect (Effect)
 import Effect.Ref (Ref, read)
@@ -29,39 +29,35 @@ rootCommands rootUrlM =
         )
         rootUrlM
 
+collectionIdMatches :: Set String -> String -> Array String
+collectionIdMatches knownCollections s =
+  let
+    collectionIdParseResult = runParser s collectionIdParser
+  in
+    ("set collection " <> _)
+      <$> ( fromRight []
+            $ ( \collectionId ->
+                  filter
+                    ( \known -> contains (Pattern collectionId) known
+                    )
+                    (toUnfoldable knownCollections)
+              )
+            <$> collectionIdParseResult
+        )
+
 contextCompleter :: Context -> (String -> Effect { matched :: String, completions :: Array String })
 contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
   let
     strInCommand = filter (\cmd -> contains (Pattern s) cmd) (rootCommands rootUrl)
 
-    collectionIdParseResult = runParser s collectionIdParser
-
-    -- the _match_ needs to be a prefix of the completion to make the magic tab
-    -- complete "advance to longest matched point" behavior work.
-    -- mapping "set collection " onto the beginning of the collection IDs that
-    -- we know about ensures the match.
-    -- this is brittle -- it only works because we _know_ in this case that
-    -- collectionIdParser relies on that string as a leader.
-    -- best case would be wrap the parser in some kind of data type like
-    -- data CmdParser = { leaderString :: String, parser :: Parser Cmd }
-    -- that would tie this information to the parser, but I haven't thought about
-    -- this much yet. For now, I'm acknowledging that it's brittle and moving on.
-    collectionIdMatches =
-      ("set collection " <> _)
-        <$> ( fromRight []
-              $ ( \collectionId ->
-                    filter
-                      ( \known -> contains (Pattern collectionId) known
-                      )
-                      (toUnfoldable knownCollections)
-                )
-              <$> collectionIdParseResult
-          )
+    collectionIds = collectionIdMatches knownCollections s
   in
-    pure $ { matched: s, completions: strInCommand <> collectionIdMatches }
+    pure $ { matched: s, completions: strInCommand <> collectionIds }
 
-contextCompleter (CollectionContext _) = \s ->
+contextCompleter (CollectionContext { knownCollections }) = \s ->
   let
     strInCommand = filter (\cmd -> contains (Pattern s) cmd) collectionCommands
+
+    collectionIds = collectionIdMatches knownCollections s
   in
-    pure $ { matched: s, completions: strInCommand }
+    pure $ { matched: s, completions: strInCommand <> collectionIds }
