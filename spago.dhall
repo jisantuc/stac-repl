@@ -8,6 +8,7 @@ You can edit this file as you like.
   , "console"
   , "effect"
   , "monad-control"
+  , "node-process"
   , "node-readline"
   , "parsing"
   , "psci-support"

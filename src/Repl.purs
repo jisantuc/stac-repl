@@ -7,11 +7,13 @@ import Client.Stac (getCollection, getCollectionItems, getCollections, getConfor
 import Command (getParser)
 import Completions (getCompletions)
 import Context (toCollectionContext, toRootContext, toRootUrl)
+import Control.Promise (toAffE)
+import Data.Array (uncons)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Monoid (mempty)
 import Data.Set (fromFoldable)
-import Data.Stac (Collection(..), CollectionItemsResponse, CollectionsResponse(..), Item(..))
+import Data.Stac (Collection(..), CollectionItemsResponse, CollectionsResponse(..), Item(..), SpatialExtent, TwoDimBbox(..))
 import Data.String.NonEmpty (toString)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
@@ -19,8 +21,9 @@ import Effect.Aff (launchAff_)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
+import Mapping (Latitude(..), Longitude(..), drawMap)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
-import Prelude (Unit, bind, discard, pure, show, ($), (<$>), (<<<), (<>))
+import Prelude (Unit, bind, discard, pure, show, ($), (-), (/), (<$>), (<>))
 import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance, prettyPrintItems)
 import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
@@ -66,6 +69,18 @@ updateItemsResponse ctxRef itemsResponse =
               ctx -> ctx
           )
           ctxRef
+
+collectionCentroid :: SpatialExtent -> Maybe (Tuple Latitude Longitude)
+collectionCentroid { bbox } =
+  ( \{ head: (TwoDimBbox { llx, lly, urx, ury }) } ->
+      let
+        latitude = Latitude $ (ury - lly) / 2.0
+
+        longitude = Longitude $ (urx - llx) / 2.0
+      in
+        Tuple latitude longitude
+  )
+    <$> uncons bbox
 
 validFor ::
   forall a m.
@@ -151,23 +166,25 @@ execute interface ctxRef cmd = case cmd of
     prompt interface
   LocateCollection -> do
     ctx <- read ctxRef
-    case ctx of
-      CollectionContext { rootUrl, collectionId } ->
-        launchAff_
-          $ do
-              response <- getCollection rootUrl collectionId
-              case response of
-                Left err ->
-                  error
-                    $ "Could not fetch collection "
-                    <> toString collectionId
-                    <> ": "
-                    <> printError err
-                Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
-              liftEffect $ prompt interface
-      _ -> do
-        error $ "Cannot locate a collection outside of a collection context: " <> show ctx
-        prompt interface
+    validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+      launchAff_
+        $ do
+            response <- getCollection rootUrl collectionId
+            case response of
+              Left err ->
+                error
+                  $ "Could not fetch collection "
+                  <> toString collectionId
+                  <> ": "
+                  <> printError err
+              Right (Collection { id, extent: { spatial } }) ->
+                let
+                  centroid = collectionCentroid spatial
+                in
+                  fromMaybe (log $ "Collection " <> id <> " had no spatial extent")
+                    $ (\(Tuple lat lon) -> toAffE $ drawMap lat lon)
+                    <$> centroid
+            liftEffect $ prompt interface
   ListCollections -> do
     ctx <- read ctxRef
     validFor toRootUrl ctx \rootUrl ->
