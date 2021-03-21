@@ -1,6 +1,8 @@
 module Repl (replProgram) where
 
 import Affjax (printError)
+import Ansi.Codes (Color(..))
+import Ansi.Output (foreground, withGraphics)
 import Client.Stac (getCollection, getCollections, getConformance)
 import Command (getParser)
 import Completions (getCompletions)
@@ -18,10 +20,13 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (error, log)
 import Effect.Ref (Ref, modify_, new, read)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
-import Prelude (Unit, bind, discard, pure, show, ($), (*>), (<$>), (<<<), (<>))
-import Printer (colorizeError, prettyPrintCollection, prettyPrintCollections, prettyPrintConformance)
+import Prelude (Unit, bind, discard, pure, show, ($), (<$>), (<<<), (<>))
+import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance)
 import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
+
+greenPrompt :: String -> String
+greenPrompt = withGraphics (foreground Green)
 
 updateKnownCollections ::
   forall m.
@@ -57,103 +62,109 @@ validFor predicate ctx continuation =
     fromMaybe fallback effect
 
 execute :: Interface -> Ref Context -> Cmd -> Effect Unit
-execute interface ctxRef cmd = do
-  ( case cmd of
-      SetCollection s -> do
-        ctx <- read ctxRef
-        case ctx of
-          RootContext { rootUrl: Just url, knownCollections } -> do
-            log $ "Set context to collection " <> toString s
-            modify_
-              ( \_ ->
-                  CollectionContext
-                    { rootUrl: url, collectionId: s, knownCollections
-                    }
-              )
-              ctxRef
-          RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
+execute interface ctxRef cmd = case cmd of
+  SetCollection s -> do
+    ctx <- read ctxRef
+    case ctx of
+      RootContext { rootUrl: Just url, knownCollections } -> do
+        log $ "Set context to collection " <> toString s
+        modify_
+          ( \_ ->
+              CollectionContext
+                { rootUrl: url, collectionId: s, knownCollections
+                }
+          )
+          ctxRef
+      RootContext { rootUrl: Nothing } -> log $ "Can't set collection context without a root url"
+      CollectionContext { rootUrl, knownCollections } ->
+        modify_
+          ( \_ -> CollectionContext { rootUrl, collectionId: s, knownCollections }
+          )
+          ctxRef
+    prompt interface
+  ViewCollection s -> do
+    ctx <- read ctxRef
+    validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+      launchAff_ do
+        collectionResp <- getCollection rootUrl collectionId
+        case collectionResp of
+          Right collection -> prettyPrintCollection collection
+          Left err ->
+            error
+              $ "Could not fetch collection "
+              <> toString collectionId
+              <> ": "
+              <> printError err
+        liftEffect $ prompt interface
+  UnsetCollection -> do
+    modify_
+      ( case _ of
+          RootContext rec -> RootContext rec
           CollectionContext { rootUrl, knownCollections } ->
-            modify_
-              ( \_ -> CollectionContext { rootUrl, collectionId: s, knownCollections }
-              )
-              ctxRef
-      ViewCollection s -> do
-        ctx <- read ctxRef
-        validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
-          launchAff_ do
-            collectionResp <- getCollection rootUrl collectionId
-            case collectionResp of
-              Right collection -> prettyPrintCollection collection
+            RootContext
+              { rootUrl: Just rootUrl, knownCollections
+              }
+      )
+      ctxRef
+    log "Returning to root context"
+    prompt interface
+  SetRootUrl s -> do
+    modify_
+      ( case _ of
+          CollectionContext { collectionId } -> RootContext { rootUrl: Just s, knownCollections: mempty }
+          RootContext _ -> RootContext { rootUrl: Just s, knownCollections: mempty }
+      )
+      ctxRef
+    let
+      newPrompt = greenPrompt $ "stac " <> s <> " > "
+    setPrompt newPrompt interface
+    prompt interface
+  LocateCollection -> do
+    ctx <- read ctxRef
+    case ctx of
+      CollectionContext { rootUrl, collectionId } ->
+        launchAff_
+          $ do
+              response <- getCollection rootUrl collectionId
+              case response of
+                Left err ->
+                  error
+                    $ "Could not fetch collection "
+                    <> toString collectionId
+                    <> ": "
+                    <> printError err
+                Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
+              liftEffect $ prompt interface
+      _ -> do
+        error $ "Cannot locate a collection outside of a collection context: " <> show ctx
+        prompt interface
+  ListCollections -> do
+    ctx <- read ctxRef
+    validFor toRootUrl ctx \rootUrl ->
+      launchAff_
+        $ do
+            response <- getCollections rootUrl
+            case response of
               Left err ->
-                log <<< colorizeError
-                  $ "Could not fetch collection "
-                  <> toString collectionId
+                error
+                  $ "Could not list collections for "
+                  <> rootUrl
                   <> ": "
                   <> printError err
-      UnsetCollection -> do
-        modify_
-          ( case _ of
-              RootContext rec -> RootContext rec
-              CollectionContext { rootUrl, knownCollections } ->
-                RootContext
-                  { rootUrl: Just rootUrl, knownCollections
-                  }
-          )
-          ctxRef
-        log "Returning to root context"
-      SetRootUrl s -> do
-        modify_
-          ( case _ of
-              CollectionContext { collectionId } -> RootContext { rootUrl: Just s, knownCollections: mempty }
-              RootContext _ -> RootContext { rootUrl: Just s, knownCollections: mempty }
-          )
-          ctxRef
-        let
-          newPrompt = "stac " <> s <> " > "
-        setPrompt newPrompt interface
-      LocateCollection -> do
-        ctx <- read ctxRef
-        case ctx of
-          CollectionContext { rootUrl, collectionId } ->
-            launchAff_
-              $ do
-                  response <- getCollection rootUrl collectionId
-                  case response of
-                    Left err ->
-                      log <<< colorizeError
-                        $ "Could not fetch collection "
-                        <> toString collectionId
-                        <> ": "
-                        <> printError err
-                    Right (Collection { id }) -> log <<< show $ "\nGot collection " <> id
-          _ -> error $ "Cannot locate a collection outside of a collection context: " <> show ctx
-      ListCollections -> do
-        ctx <- read ctxRef
-        validFor toRootUrl ctx \rootUrl ->
-          launchAff_
-            $ do
-                response <- getCollections rootUrl
-                case response of
-                  Left err ->
-                    log <<< colorizeError
-                      $ "Could not list collections for "
-                      <> rootUrl
-                      <> ": "
-                      <> printError err
-                  Right resp@(CollectionsResponse { collections }) -> do
-                    updateKnownCollections ctxRef collections
-                    prettyPrintCollections resp
-      GetConformance root -> do
-        ctx <- read ctxRef
-        validFor toRootUrl ctx \rootUrl ->
-          launchAff_
-            $ do
-                response <- getConformance rootUrl
-                case response of
-                  Left err -> log <<< colorizeError $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
-                  Right conformance -> prettyPrintConformance conformance
-  )
-    *> prompt interface
+              Right resp@(CollectionsResponse { collections }) -> do
+                updateKnownCollections ctxRef collections
+                prettyPrintCollections resp
+            liftEffect $ prompt interface
+  GetConformance root -> do
+    ctx <- read ctxRef
+    validFor toRootUrl ctx \rootUrl ->
+      launchAff_
+        $ do
+            response <- getConformance rootUrl
+            case response of
+              Left err -> error $ "Could not get conformance for " <> rootUrl <> ": " <> printError err
+              Right conformance -> prettyPrintConformance conformance
+            liftEffect $ prompt interface
 
 -- what needs to happen in lineHandler?
 -- need to:
@@ -169,7 +180,7 @@ lineHandler ctxRef interface s = do
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
     Tuple _ (Left _) -> do
-      log <<< colorizeError
+      error
         $ "I didn't recognize the command "
         <> s
         <> ". Try <TAB><TAB> to see available commands."
@@ -180,6 +191,6 @@ replProgram :: Effect Interface
 replProgram = do
   ctxRef <- new $ RootContext { rootUrl: Nothing, knownCollections: mempty }
   interface <- createConsoleInterface $ getCompletions ctxRef
-  setPrompt "stac > " interface
+  setPrompt (greenPrompt "stac > ") interface
   setLineHandler (lineHandler ctxRef interface) interface
   pure $ interface
