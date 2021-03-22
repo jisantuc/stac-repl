@@ -25,7 +25,7 @@ import Mapping (Latitude(..), Longitude(..), drawMap)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (-), (/), (<$>), (<>))
 import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance, prettyPrintItems)
-import Text.Parsing.Parser (parseErrorMessage, runParser)
+import Text.Parsing.Parser (runParser)
 import Types (Cmd(..), Context(..))
 
 greenPrompt :: String -> String
