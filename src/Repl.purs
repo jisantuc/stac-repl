@@ -3,7 +3,7 @@ module Repl (replProgram) where
 import Affjax (printError)
 import Ansi.Codes (Color(..))
 import Ansi.Output (foreground, withGraphics)
-import Client.Stac (getCollection, getCollectionItems, getCollections, getConformance, nextCollectionItemsPage)
+import Client.Stac (getCollection, getCollectionItem, getCollectionItems, getCollections, getConformance, nextCollectionItemsPage)
 import Command (getParser)
 import Completions (getCompletions)
 import Context (toCollectionContext, toRootContext, toRootUrl)
@@ -25,7 +25,7 @@ import Mapping (Latitude(..), Longitude(..), drawMap)
 import Node.ReadLine (Interface, createConsoleInterface, prompt, setLineHandler, setPrompt)
 import Prelude (Unit, bind, discard, pure, show, ($), (-), (/), (<$>), (<>))
 import Printer (prettyPrintCollection, prettyPrintCollections, prettyPrintConformance, prettyPrintItems)
-import Text.Parsing.Parser (runParser)
+import Text.Parsing.Parser (parseErrorMessage, runParser)
 import Types (Cmd(..), Context(..))
 
 greenPrompt :: String -> String
@@ -64,23 +64,23 @@ updateItemsResponse ctxRef itemsResponse =
                 CollectionContext
                   $ rec
                       { itemsResponse = itemsResponse
-                      , knownItems = rec.knownItems <> mempty
+                      , knownItems = rec.knownItems <> itemIds
                       }
               ctx -> ctx
           )
           ctxRef
 
 collectionCentroid :: SpatialExtent -> Maybe (Tuple Latitude Longitude)
-collectionCentroid { bbox } =
-  ( \{ head: (TwoDimBbox { llx, lly, urx, ury }) } ->
-      let
-        latitude = Latitude $ (ury - lly) / 2.0
+collectionCentroid { bbox } = (\{ head } -> bboxCentroid head) <$> uncons bbox
 
-        longitude = Longitude $ (urx - llx) / 2.0
-      in
-        Tuple latitude longitude
-  )
-    <$> uncons bbox
+bboxCentroid :: TwoDimBbox -> Tuple Latitude Longitude
+bboxCentroid (TwoDimBbox { llx, lly, urx, ury }) =
+  let
+    latitude = Latitude $ ury - (ury - lly) / 2.0
+
+    longitude = Longitude $ urx - (urx - llx) / 2.0
+  in
+    Tuple latitude longitude
 
 validFor ::
   forall a m.
@@ -247,6 +247,26 @@ execute interface ctxRef cmd = case cmd of
             updateItemsResponse ctxRef resp
             prettyPrintItems features
             liftEffect $ prompt interface
+  LocateItem itemId -> do
+    ctx <- read ctxRef
+    validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
+      launchAff_ do
+        response <- getCollectionItem rootUrl collectionId itemId
+        case response of
+          Left err ->
+            error
+              $ "Could not get item "
+              <> toString itemId
+              <> " in collection "
+              <> toString collectionId
+              <> ": "
+              <> printError err
+          Right (Item { bbox }) ->
+            let
+              Tuple lat lon = bboxCentroid bbox
+            in
+              toAffE $ drawMap lat lon
+        liftEffect $ prompt interface
 
 lineHandler :: Ref Context -> Interface -> String -> Effect Unit
 lineHandler ctxRef interface s = do
@@ -255,7 +275,8 @@ lineHandler ctxRef interface s = do
     cmdParseResult = runParser s parser
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
-    Tuple _ (Left _) -> do
+    Tuple _ (Left e) -> do
+      error $ "Err was: " <> parseErrorMessage e
       error
         $ "I didn't recognize the command "
         <> withGraphics (foreground Red) s
