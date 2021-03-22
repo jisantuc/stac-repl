@@ -1,0 +1,11 @@
+#!/bin/bash
+
+mkdir -p dist
+
+spago bundle-app -t dist/stac-repl.js
+
+echo '#!/usr/bin/env' > dist/stac-repl
+
+cat dist/stac-repl.js >> dist/stac-repl
+
+chmod +x dist/stac-repl
