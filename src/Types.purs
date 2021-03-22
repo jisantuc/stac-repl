@@ -48,6 +48,7 @@ data Cmd
   | UnsetCollection
   | ListItems Int
   | NextItemsPage
+  | LocateItem NonEmptyString
 
 type StringParser
   = Parser String

@@ -1,6 +1,6 @@
 module Completions (getCompletions) where
 
-import Command (collectionIdParser)
+import Command (collectionIdParser, locateItemIdParser)
 import Data.Array (filter)
 import Data.Either (fromRight)
 import Data.Foldable (foldMap)
@@ -19,7 +19,15 @@ getCompletions ctxRef s = do
   contextCompleter ctx $ s
 
 collectionCommands :: Array String
-collectionCommands = [ "view", "unset collection", "locate", "get conformance", "list items", "next page" ]
+collectionCommands =
+  [ "view"
+  , "unset collection"
+  , "locate collection"
+  , "get conformance"
+  , "list items"
+  , "next page"
+  , "locate item"
+  ]
 
 rootCommands :: Maybe RootUrl -> Array String
 rootCommands rootUrlM =
@@ -45,6 +53,22 @@ collectionIdMatches knownCollections s =
             <$> collectionIdParseResult
         )
 
+itemIdMatches :: Set String -> String -> Array String
+itemIdMatches knownItems s =
+  let
+    itemIdParseResult = runParser s locateItemIdParser
+  in
+    ("locate item " <> _)
+      <$> ( fromRight []
+            $ ( \itemId ->
+                  filter
+                    ( \known -> contains (Pattern itemId) known
+                    )
+                    (toUnfoldable knownItems)
+              )
+            <$> itemIdParseResult
+        )
+
 contextCompleter :: Context -> (String -> Effect { matched :: String, completions :: Array String })
 contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
   let
@@ -54,10 +78,12 @@ contextCompleter (RootContext { rootUrl, knownCollections }) = \s ->
   in
     pure $ { matched: s, completions: strInCommand <> collectionIds }
 
-contextCompleter (CollectionContext { knownCollections }) = \s ->
+contextCompleter (CollectionContext { knownCollections, knownItems }) = \s ->
   let
     strInCommand = filter (\cmd -> contains (Pattern s) cmd) collectionCommands
 
     collectionIds = collectionIdMatches knownCollections s
+
+    itemIds = itemIdMatches knownItems s
   in
-    pure $ { matched: s, completions: strInCommand <> collectionIds }
+    pure $ { matched: s, completions: strInCommand <> collectionIds <> itemIds }

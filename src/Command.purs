@@ -1,10 +1,10 @@
-module Command (getParser, collectionIdParser) where
+module Command (getParser, collectionIdParser, locateItemIdParser) where
 
 import Control.Alt ((<|>))
 import Control.Apply ((*>), (<$))
-import Data.Array (foldl, some)
+import Data.Array as Array
 import Data.CodePoint.Unicode (hexDigitToInt)
-import Data.List (List, toUnfoldable)
+import Data.List (List, some, toUnfoldable)
 import Data.Maybe (Maybe(..), maybe)
 import Data.String (codePointFromChar)
 import Data.String.CodeUnits (fromCharArray)
@@ -22,9 +22,9 @@ import Types (Cmd(..), Context(..), RootUrl, StringParser)
 -- was failing to compile with a kind unification error 🤔
 decimal :: StringParser Int
 decimal = do
-  digits <- some digit
+  digits <- Array.some digit
   ( maybe (fail "not digits") pure
-      $ foldl folder (Just 0) digits
+      $ Array.foldl folder (Just 0) digits
   )
   where
   base = 10
@@ -37,8 +37,14 @@ decimal = do
 fromList :: forall a. List a -> Array a
 fromList = toUnfoldable
 
+terminalIdParser :: String -> StringParser String
+terminalIdParser s = fromCharArray <<< fromList <$> (string s *> skipSpaces *> manyTill anyChar eof)
+
 collectionIdParser :: StringParser String
-collectionIdParser = fromCharArray <<< fromList <$> (string "set collection" *> skipSpaces *> manyTill anyChar eof)
+collectionIdParser = terminalIdParser "set collection"
+
+locateItemIdParser :: StringParser String
+locateItemIdParser = terminalIdParser "locate item"
 
 setCollectionParser :: StringParser Cmd
 setCollectionParser =
@@ -50,10 +56,10 @@ setCollectionParser =
       )
 
 setRootUrlParser :: StringParser Cmd
-setRootUrlParser = SetRootUrl <<< fromCharArray <<< fromList <$> (string "set root url" *> skipSpaces *> manyTill anyChar eof)
+setRootUrlParser = SetRootUrl <<< fromCharArray <<< fromList <$> (string "set root url" *> skipSpaces *> some anyChar)
 
 locateCollectionParser :: StringParser Cmd
-locateCollectionParser = LocateCollection <$ (string "locate" *> skipSpaces *> eof)
+locateCollectionParser = LocateCollection <$ (string "locate collection" *> skipSpaces *> eof)
 
 listCollectionsParser :: StringParser Cmd
 listCollectionsParser = ListCollections <$ (string "list collections" *> skipSpaces *> manyTill anyChar eof)
@@ -71,6 +77,15 @@ listItemsParser =
 nextPageParser :: StringParser Cmd
 nextPageParser = NextItemsPage <$ string "next page"
 
+locateItemParser :: StringParser Cmd
+locateItemParser =
+  LocateItem
+    <$> ( locateItemIdParser
+          >>= \s -> case fromString s of
+              Just ne -> pure ne
+              Nothing -> fail "Cannot set an empty string as item id to locate"
+      )
+
 getParser :: Context -> StringParser Cmd
 getParser ctx = case ctx of
   RootContext { rootUrl: Nothing } -> setRootUrlParser
@@ -85,7 +100,8 @@ getParser ctx = case ctx of
       <$ (string "unset collection" *> skipSpaces *> eof)
       <|> setCollectionParser
       <|> setRootUrlParser
-      <|> locateCollectionParser
       <|> getConformanceParser rootUrl
       <|> listItemsParser
       <|> nextPageParser
+      <|> locateCollectionParser
+      <|> locateItemParser

@@ -7,3 +7,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - List and page through items from collection context [#11](https://github.com/jisantuc/stac-repl/pull/11) (@jisantuc)
+- Items and collections can be located on Mapscii maps [#12](https://github.com/jisantuc/stac-repl/pull/12) (@jisantuc)
