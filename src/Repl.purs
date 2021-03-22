@@ -276,7 +276,6 @@ lineHandler ctxRef interface s = do
   case Tuple s cmdParseResult of
     Tuple "" _ -> prompt interface
     Tuple _ (Left e) -> do
-      error $ "Err was: " <> parseErrorMessage e
       error
         $ "I didn't recognize the command "
         <> withGraphics (foreground Red) s
