@@ -5,11 +5,19 @@ A context-aware console application for interacting with local and remote STAC r
 Quickstart
 ----------
 
+### I just want to run it
+
+* `docker run -it jisantuc/stac-repl:0.1.1`
+* `<TAB><TAB>` and try out some commands
+* You can try the root url `https://franklin.nasa-hsi.azavea.com` for a small catalog with decent variety
+
+### Running in development
 * clone this repo
 * `spago run`
 * `<TAB><TAB>` and try out some commands
 
 What can you do so far?
+-----------------------
 
 * choose a root url: `set root url stac-api-root-url`
 * check conformance: `get conformance`
