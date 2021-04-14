@@ -18,7 +18,7 @@ You can edit this file as you like.
   , "lists"
   , "maybe"
   , "node-readline"
-  , "ordered-ollections",
+  , "ordered-ollections"
   , "parsing"
   , "prelude"
   , "psci-support"
