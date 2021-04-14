@@ -31,6 +31,15 @@ import Types (Cmd(..), Context(..))
 greenPrompt :: String -> String
 greenPrompt = withGraphics (foreground Green)
 
+rootPrompt :: String
+rootPrompt = greenPrompt $ "stac > "
+
+urlPrompt :: String -> String
+urlPrompt s = greenPrompt $ "stac " <> s <> " > "
+
+collectionPrompt :: String -> String -> String
+collectionPrompt collectionId s = greenPrompt $ "stac " <> s <> " " <> collectionId <> " > "
+
 updateKnownCollections ::
   forall m.
   MonadEffect m =>
@@ -112,6 +121,9 @@ execute interface ctxRef cmd = case cmd of
                 }
           )
           ctxRef
+        let
+          newPrompt = collectionPrompt (toString s) url
+        setPrompt newPrompt interface
       RootContext { rootUrl: Nothing } -> log $ "Can't choose a collection without a root url"
       CollectionContext { rootUrl, knownCollections } -> do
         log $ "Set context to collection " <> toString s
@@ -126,6 +138,9 @@ execute interface ctxRef cmd = case cmd of
                 }
           )
           ctxRef
+        let
+          newPrompt = collectionPrompt (toString s) rootUrl
+        setPrompt newPrompt interface
     prompt interface
   ViewCollection s -> do
     ctx <- read ctxRef
@@ -142,17 +157,20 @@ execute interface ctxRef cmd = case cmd of
               <> printError err
         liftEffect $ prompt interface
   UnsetCollection -> do
-    modify_
-      ( case _ of
-          RootContext rec -> RootContext rec
-          CollectionContext { rootUrl, knownCollections } ->
-            RootContext
-              { rootUrl: Just rootUrl, knownCollections
-              }
-      )
-      ctxRef
-    log "Returning to root context"
-    prompt interface
+    ctx <- read ctxRef
+    validFor toRootUrl ctx \root -> do
+      modify_
+        ( case _ of
+            RootContext rec -> RootContext rec
+            CollectionContext { rootUrl, knownCollections } ->
+              RootContext
+                { rootUrl: Just rootUrl, knownCollections
+                }
+        )
+        ctxRef
+      log "Returning to root context"
+      setPrompt (urlPrompt root) interface
+      prompt interface
   SetRootUrl s -> do
     modify_
       ( case _ of
@@ -161,7 +179,7 @@ execute interface ctxRef cmd = case cmd of
       )
       ctxRef
     let
-      newPrompt = greenPrompt $ "stac " <> s <> " > "
+      newPrompt = urlPrompt s
     setPrompt newPrompt interface
     prompt interface
   LocateCollection -> do
@@ -287,6 +305,6 @@ replProgram :: Effect Interface
 replProgram = do
   ctxRef <- new $ RootContext { rootUrl: Nothing, knownCollections: mempty }
   interface <- createConsoleInterface $ getCompletions ctxRef
-  setPrompt (greenPrompt "stac > ") interface
+  setPrompt rootPrompt interface
   setLineHandler (lineHandler ctxRef interface) interface
   pure $ interface
