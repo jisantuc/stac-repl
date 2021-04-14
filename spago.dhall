@@ -13,12 +13,12 @@ You can edit this file as you like.
   , "control"
   , "effect"
   , "either"
-  , "foldabletraversable",
-  , "foreign-bject",
+  , "foldable-traversable"
+  , "foreign-object"
   , "lists"
   , "maybe"
   , "node-readline"
-  , "ordered-ollections"
+  , "ordered-collections"
   , "parsing"
   , "prelude"
   , "psci-support"
