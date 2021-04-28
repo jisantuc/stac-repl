@@ -11,7 +11,7 @@ import Ansi.Output (foreground, withGraphics)
 import Data.Array.NonEmpty (fromArray)
 import Data.Functor (void)
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Stac (Collection(..), CollectionsResponse(..), ConformanceClasses, Item(..), ItemAsset(..))
+import Data.Stac (Collection(..), CollectionsResponse(..), ConformanceClasses, Item(..), asset(..))
 import Data.Traversable (fold, traverse)
 import Data.TraversableWithIndex (traverseWithIndex)
 import Effect.Class (class MonadEffect)
@@ -45,8 +45,8 @@ prettyPrintCollection (Collection record) = do
 colorizeError :: String -> String
 colorizeError = withGraphics (foreground Red)
 
-prettyPrintAsset :: forall m. MonadEffect m => String -> ItemAsset -> m Unit
-prettyPrintAsset assetKey (ItemAsset { _type, title, href }) =
+prettyPrintAsset :: forall m. MonadEffect m => String -> asset -> m Unit
+prettyPrintAsset assetKey (asset { _type, title, href }) =
   let
     titlePrefix = withGraphics (foreground Blue) (fromMaybe assetKey title) <> ": "
 
@@ -54,7 +54,7 @@ prettyPrintAsset assetKey (ItemAsset { _type, title, href }) =
   in
     log $ titlePrefix <> href <> mediaTypeSuffix
 
-prettyPrintAssets :: forall m. MonadEffect m => Object ItemAsset -> m Unit
+prettyPrintAssets :: forall m. MonadEffect m => Object asset -> m Unit
 prettyPrintAssets assets = void $ traverseWithIndex prettyPrintAsset assets
 
 prettyPrintItem :: forall m. MonadEffect m => Item -> m Unit
