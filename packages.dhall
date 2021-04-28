@@ -122,5 +122,5 @@ in  upstream
       , "uri"
       ]
     , repo = "https://github.com/jisantuc/purescript-stac.git"
-    , version = "v1.0.1"
+    , version = "v2.0.0"
     }

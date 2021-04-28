@@ -4,13 +4,14 @@ You can edit this file as you like.
 -}
 { name = "stac-repl"
 , dependencies =
-  [ "aff-promise"
-  , "aff"
+  [ "aff"
+  , "aff-promise"
   , "affjax"
   , "ansi"
   , "arrays"
   , "console"
   , "control"
+  , "decimals"
   , "effect"
   , "either"
   , "foldable-traversable"
