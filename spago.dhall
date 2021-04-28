@@ -11,7 +11,6 @@ You can edit this file as you like.
   , "arrays"
   , "console"
   , "control"
-  , "decimals"
   , "effect"
   , "either"
   , "foldable-traversable"

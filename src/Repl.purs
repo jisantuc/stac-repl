@@ -234,7 +234,7 @@ execute interface ctxRef cmd = case cmd of
     ctx <- read ctxRef
     validFor toCollectionContext ctx \{ rootUrl, collectionId } ->
       launchAff_ do
-        response <- getCollectionItems rootUrl collectionId
+        response <- getCollectionItems rootUrl collectionId Nothing
         case response of
           Left err ->
             error
@@ -247,7 +247,6 @@ execute interface ctxRef cmd = case cmd of
           Right resp@{ features } -> do
             updateItemsResponse ctxRef resp
             prettyPrintItems features
-            liftEffect $ prompt interface
         liftEffect $ prompt interface
   NextItemsPage -> do
     ctx <- read ctxRef
